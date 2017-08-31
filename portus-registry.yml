@@ -1,0 +1,110 @@
+version: '3'
+services:  
+  db:
+    image: library/mariadb:10.0.32
+    restart: unless-stopped
+    container_name: mariadb
+    command: mysqld --innodb-buffer-pool-size=64M
+    environment:
+      MYSQL_DATABASE: portus_production
+      MYSQL_ROOT_PASSWORD: ${DATABASE_PASSWORD}
+    volumes:
+      - mysql-data:/var/lib/mysql
+
+  portus:
+    build:
+      context: ./portus
+    restart: unless-stopped
+    container_name: portus
+    #ports:
+    #  - 3000:3000
+    depends_on:
+      - db
+    environment:
+      PORTUS_MACHINE_FQDN_VALUE: ${PORTUS_FQDN}
+      PORTUS_PRODUCTION_HOST: db
+      PORTUS_PRODUCTION_DATABASE: portus_production
+      PORTUS_PRODUCTION_USERNAME: root
+      PORTUS_PRODUCTION_PASSWORD: ${DATABASE_PASSWORD}
+      # Secrets
+      PORTUS_SECRET_KEY_BASE: ${SECRET_KEY_BASE}
+      PORTUS_CHECK_SSL_USAGE_ENABLED: 'false'
+      PORTUS_KEY_PATH: '/certificates/portus.key'
+      PORTUS_PASSWORD: ${PORTUS_PASSWORD}
+      RAILS_SERVE_STATIC_FILES: 'true'
+      # letsencrypt proxy
+      VIRTUAL_HOST: ${PORTUS_FQDN}
+      VIRTUAL_PROTO: http
+      VIRTUAL_PORT: 3000
+      LETSENCRYPT_HOST: ${PORTUS_FQDN}
+      LETSENCRYPT_EMAIL: ${LETSENCRYPT_EMAIL}
+      #LETSENCRYPT_TEST: 'true'
+    volumes:
+      - portus-data:/srv/Portus/public
+
+  crono:
+    build:
+      context: ./portus
+    restart: unless-stopped
+    container_name: crono
+    environment:
+      PORTUS_MACHINE_FQDN_VALUE: ${PORTUS_FQDN}
+      PORTUS_PRODUCTION_HOST: db
+      PORTUS_PRODUCTION_DATABASE: portus_production
+      PORTUS_PRODUCTION_USERNAME: root
+      PORTUS_PRODUCTION_PASSWORD: ${DATABASE_PASSWORD}
+      # Secrets.
+      PORTUS_SECRET_KEY_BASE: ${SECRET_KEY_BASE}
+      PORTUS_CHECK_SSL_USAGE_ENABLED: 'false'
+      PORTUS_KEY_PATH: /certificates/portus.key
+      PORTUS_PASSWORD: ${PORTUS_PASSWORD}
+      # We want to execute crono, not portus
+      PORTUS_INIT_COMMAND: bin/crono
+  
+  registry:
+    build:
+      context: ./registry
+    restart: unless-stopped
+    container_name: registry
+    command: ["/bin/sh", "/etc/docker/registry/init"]
+    #ports:
+      #- 5001:5001 # required to access debug service
+      #- 5000:5000
+    environment:
+      # Authentication
+      REGISTRY_AUTH_TOKEN_REALM: https://${PORTUS_FQDN}/v2/token
+      REGISTRY_AUTH_TOKEN_SERVICE: ${REGISTRY_FQDN}
+      REGISTRY_AUTH_TOKEN_ISSUER: ${PORTUS_FQDN}
+      REGISTRY_AUTH_TOKEN_ROOTCERTBUNDLE: /secrets/portus.crt
+      # Portus endpoint
+      REGISTRY_NOTIFICATIONS_ENDPOINTS: >
+        - name: portus
+          url: http://portus:3000/v2/webhooks/events
+          timeout: 2000ms
+          threshold: 5
+          backoff: 1s
+      # If you choose to use AWS S3 as storage driver
+      #REGISTRY_STORAGE: s3
+      #REGISTRY_STORAGE_S3_REGION: us-east-1
+      #REGISTRY_STORAGE_S3_BUCKET: docker-registry
+      #REGISTRY_STORAGE_S3_ACCESSKEY: ****
+      #REGISTRY_STORAGE_S3_SECRETKEY: ****
+      # letsencrypt proxy
+      VIRTUAL_HOST: ${REGISTRY_FQDN}
+      VIRTUAL_PROTO: http
+      VIRTUAL_PORT: 5000
+      LETSENCRYPT_HOST: ${REGISTRY_FQDN}
+      LETSENCRYPT_EMAIL: ${LETSENCRYPT_EMAIL}
+      #LETSENCRYPT_TEST: 'true'
+    volumes:
+      - registry-data:/var/lib/registry
+   
+networks:
+  default:
+    external:
+      name: webproxy
+
+volumes:
+  mysql-data:
+  portus-data:
+  registry-data:
